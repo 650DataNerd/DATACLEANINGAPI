@@ -4,22 +4,18 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 import logging
 import os
 import uvicorn
-from fastapi import FastAPI
+import asyncio
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 
+# Initialize FastAPI app
 app = FastAPI()
 
 @app.get("/")
 def read_root():
     return {"message": "API is running successfully!"}
 
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 10000))  # Render assigns a dynamic port
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
-    
-    
 @app.post("/clean-data/")
 async def clean_data(file: UploadFile = File(...)):
     try:
@@ -47,6 +43,7 @@ async def clean_data(file: UploadFile = File(...)):
 
         # Step 3: Handle missing values
         df.dropna(how='all', inplace=True)  # Drop fully empty rows
+
         def safe_fill(value, column):
             """Fill missing values safely with better defaults."""
             if pd.isna(value) or (isinstance(value, str) and value.strip() == ""):
@@ -54,7 +51,6 @@ async def clean_data(file: UploadFile = File(...)):
             return value
 
         df = df.apply(lambda col: col.map(lambda x: safe_fill(x, col.name)))
-
 
         # Check if data is still present
         if df.empty:
@@ -73,3 +69,9 @@ async def clean_data(file: UploadFile = File(...)):
     except Exception as e:
         logging.error(f"Error processing file: {str(e)}")
         return {"status": "error", "message": str(e)}
+
+# ✅ Fix Import Path for Uvicorn
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 10000))  # Render assigns a dynamic port
+    uvicorn.run(app, host="0.0.0.0", port=port)
+
