@@ -5,12 +5,22 @@ import logging
 import os
 import uvicorn
 import asyncio
+from fastapi.middleware.cors import CORSMiddleware
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 
 # Initialize FastAPI app
 app = FastAPI()
+
+# ✅ Fix: Allow frontend to connect (CORS Middleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all domains (change this in production)
+    allow_credentials=True,
+    allow_methods=["*"],  
+    allow_headers=["*"],
+)
 
 @app.get("/")
 def read_root():
@@ -70,8 +80,8 @@ async def clean_data(file: UploadFile = File(...)):
         logging.error(f"Error processing file: {str(e)}")
         return {"status": "error", "message": str(e)}
 
-# ✅ Fix Import Path for Uvicorn
+# ✅ Fix: Corrected Uvicorn Configuration (Fixes asyncio.run() issue)
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))  # Render assigns a dynamic port
-    uvicorn.run(app, host="0.0.0.0", port=port)
-
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(uvicorn.run(app, host="0.0.0.0", port=port))
