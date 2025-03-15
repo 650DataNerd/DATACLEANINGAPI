@@ -1,15 +1,18 @@
 import pandas as pd
 import io
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Form
-import logging
 import os
-import uvicorn
+import logging
 import asyncio
 import requests
+import uuid
+import shutil
+from datetime import datetime, timedelta
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-import uuid  # For generating unique download tokens
+from pathlib import Path
 
+# Load environment variables
 load_dotenv()
 
 # Set up logging
@@ -18,21 +21,34 @@ logging.basicConfig(level=logging.INFO)
 # Initialize FastAPI app
 app = FastAPI()
 
-# ✅ Allow frontend to connect (CORS Middleware)
+# ✅ CORS Middleware (Allow frontend access)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all domains (change in production)
+    allow_origins=["*"],  # Allow all domains (update for production)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ✅ Store transactions (mock database for simplicity)
-verified_payments = {}
-cleaned_files = {}  # Store cleaned CSVs temporarily
-
+# ✅ Environment Variables
 PAYSTACK_SECRET_KEY = os.getenv("PAYSTACK_SECRET_KEY")
 
+# ✅ Storage Paths
+TEMP_DIR = Path("temp_files")
+TEMP_DIR.mkdir(exist_ok=True)  # Ensure directory exists
+
+# ✅ Store transactions & cleaned files (mock database)
+verified_payments = {}  # Stores verified payments
+cleaned_files = {}  # Stores cleaned file paths
+
+# ✅ Auto-delete old files (cleanup function)
+def cleanup_old_files():
+    """Delete files older than 24 hours to free up space."""
+    for file in TEMP_DIR.iterdir():
+        if file.is_file() and datetime.fromtimestamp(file.stat().st_mtime) < datetime.now() - timedelta(hours=24):
+            file.unlink()
+
+# ✅ API Endpoints
 @app.get("/")
 def read_root():
     """Root route to check if API is running."""
@@ -56,7 +72,7 @@ async def clean_data(
         # Read file contents
         contents = await file.read()
 
-        # Determine file type and read accordingly
+        # Validate file type
         if file.filename.endswith(".csv"):
             df = pd.read_csv(io.StringIO(contents.decode("utf-8")))
         elif file.filename.endswith(".json"):
@@ -64,30 +80,30 @@ async def clean_data(
         elif file.filename.endswith(".txt"):
             df = pd.read_csv(io.StringIO(contents.decode("utf-8")), delimiter="\t")
         else:
-            raise HTTPException(status_code=400, detail="Unsupported file type. Please upload CSV, JSON, or TXT.")
+            raise HTTPException(status_code=400, detail="Unsupported file type. Upload CSV, JSON, or TXT.")
 
-        # Log file processing
+        # ✅ Log file details
         logging.info(f"Processing file: {file.filename} with {df.shape[0]} rows and {df.shape[1]} columns")
 
-        # Step 1: Standardize column names
+        # ✅ Standardize column names
         df.columns = df.columns.str.strip().str.lower().str.replace(r'\.\d+', '', regex=True)
 
-        # Step 2: Select columns to clean (if specified)
+        # ✅ Select specific columns to clean (if provided)
         if columns_to_clean:
             selected_columns = [col.strip().lower() for col in columns_to_clean.split(",")]
             df = df[selected_columns] if all(col in df.columns for col in selected_columns) else df
 
-        # Step 3: Handle missing values
+        # ✅ Handle missing values
         if missing_value_strategy == "drop":
             df.dropna(inplace=True)
         elif missing_value_strategy == "fill":
             df.fillna("Unknown", inplace=True)
 
-        # Step 4: Remove duplicate rows
+        # ✅ Remove duplicate rows (if enabled)
         if remove_duplicates:
             df.drop_duplicates(inplace=True)
 
-        # Step 5: Apply text formatting
+        # ✅ Apply text formatting
         if text_format == "lowercase":
             df = df.applymap(lambda x: x.lower() if isinstance(x, str) else x)
         elif text_format == "uppercase":
@@ -95,20 +111,21 @@ async def clean_data(
         elif text_format == "capitalize":
             df = df.applymap(lambda x: x.capitalize() if isinstance(x, str) else x)
 
-        # Check if data is still present
+        # ✅ Validate cleaned data
         if df.empty:
-            raise HTTPException(status_code=400, detail="No data left after cleaning. Please check your input file.")
+            raise HTTPException(status_code=400, detail="No data left after cleaning. Check your input file.")
 
-        # Save cleaned CSV file
-        cleaned_filename = f"cleaned_{uuid.uuid4().hex}.csv"
-        df.to_csv(cleaned_filename, index=False)
-        cleaned_files[cleaned_filename] = cleaned_filename
+        # ✅ Save cleaned CSV file
+        cleaned_filename = f"{uuid.uuid4().hex}.csv"
+        cleaned_path = TEMP_DIR / cleaned_filename
+        df.to_csv(cleaned_path, index=False)
+        cleaned_files[cleaned_filename] = str(cleaned_path)
 
         return {
             "status": "success",
             "original_rows": len(contents.splitlines()) - 1,  # Exclude header row
             "cleaned_rows": len(df),
-            "download_token": cleaned_filename  # Use filename as token for now
+            "download_token": cleaned_filename  # Use filename as token
         }
 
     except Exception as e:
@@ -117,34 +134,36 @@ async def clean_data(
 
 @app.post("/paystack/webhook/")
 async def verify_payment(request: Request):
-    """Handles Paystack webhook for payment verification"""
+    """Handles Paystack webhook for payment verification."""
     try:
-        payload = await request.json()  # Ensure JSON body is received
+        payload = await request.json()
         event = payload.get("event", "")
 
-        if event == "charge.success":
-            payment_reference = payload["data"]["reference"]
+        if event != "charge.success":
+            return {"status": "error", "message": "Invalid event"}
 
-            # Verify payment status
-            headers = {
-                "Authorization": f"Bearer {PAYSTACK_SECRET_KEY}",
-                "Content-Type": "application/json"
+        payment_reference = payload["data"]["reference"]
+
+        # ✅ Verify payment with Paystack
+        headers = {
+            "Authorization": f"Bearer {PAYSTACK_SECRET_KEY}",
+            "Content-Type": "application/json"
+        }
+        response = requests.get(f"https://api.paystack.co/transaction/verify/{payment_reference}", headers=headers)
+        payment_data = response.json()
+
+        if payment_data.get("status") and payment_data["data"].get("status") == "success":
+            # ✅ Payment Successful — Generate a unique download token
+            download_token = str(uuid.uuid4())
+            verified_payments[download_token] = payment_reference
+
+            return {
+                "status": "success",
+                "message": "Payment verified. Use the token to download your CSV.",
+                "download_token": download_token
             }
-            response = requests.get(f"https://api.paystack.co/transaction/verify/{payment_reference}", headers=headers)
-            payment_data = response.json()
 
-            if payment_data.get("status") and payment_data["data"].get("status") == "success":
-                # ✅ Payment Successful — Generate a unique download token
-                download_token = str(uuid.uuid4())
-                verified_payments[download_token] = payment_reference
-
-                return {
-                    "status": "success",
-                    "message": "Payment verified. Use the token to download your CSV.",
-                    "download_token": download_token
-                }
-
-        return {"status": "error", "message": "Invalid event"}
+        return {"status": "error", "message": "Payment verification failed"}
 
     except Exception as e:
         logging.error(f"Webhook error: {str(e)}")
@@ -152,22 +171,24 @@ async def verify_payment(request: Request):
 
 @app.get("/download/{token}")
 async def download_csv(token: str):
-    """Allow CSV download only if payment is verified."""
+    """Allows CSV download only if payment is verified."""
     if token not in verified_payments:
         raise HTTPException(status_code=403, detail="Invalid or expired token. Payment required.")
 
-    # Retrieve stored cleaned file
     filename = verified_payments[token]
-    if filename not in cleaned_files:
+    file_path = cleaned_files.get(filename)
+
+    if not file_path or not Path(file_path).exists():
         raise HTTPException(status_code=404, detail="File not found.")
 
-    # Read and return file contents
-    with open(cleaned_files[filename], "r") as f:
+    # ✅ Read and return file contents
+    with open(file_path, "r") as f:
         csv_content = f.read()
 
-    # Remove token after download (one-time use)
+    # ✅ Remove token and file after download (one-time use)
     del verified_payments[token]
     del cleaned_files[filename]
+    Path(file_path).unlink(missing_ok=True)
 
     return {
         "status": "success",
@@ -178,6 +199,7 @@ async def download_csv(token: str):
 # ✅ Uvicorn Configuration
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))  # Render assigns a dynamic port
+    cleanup_old_files()  # Run cleanup on startup
     config = uvicorn.Config(app, host="0.0.0.0", port=port)
     server = uvicorn.Server(config)
     server.run()
