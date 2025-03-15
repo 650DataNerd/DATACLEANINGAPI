@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Data Cleaning Service</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://js.paystack.co/v1/inline.js"></script> <!-- ✅ Paystack SDK -->
     <style>
         /* Background Gradient */
         body {
@@ -15,7 +16,7 @@
 
         /* Glassmorphism Effect */
         .glass {
-            background: rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.15);
             backdrop-filter: blur(10px);
             border-radius: 10px;
             padding: 20px;
@@ -25,6 +26,7 @@
         /* Button Styling */
         .btn {
             transition: all 0.3s ease-in-out;
+            cursor: pointer;
         }
         .btn:hover {
             transform: translateY(-3px);
@@ -64,9 +66,12 @@
         <!-- File Upload -->
         <input id="fileInput" type="file" class="w-full p-2 mb-4 border rounded bg-gray-800 text-white">
         
-        <!-- Upload Button -->
-        <button id="uploadBtn" class="btn bg-blue-500 text-white px-6 py-2 rounded-lg w-full">
+        <!-- Upload & Pay Buttons -->
+        <button id="uploadBtn" class="btn bg-blue-500 text-white px-6 py-2 rounded-lg w-full mb-2">
             Upload & Clean Data
+        </button>
+        <button id="payBtn" class="btn bg-green-500 text-white px-6 py-2 rounded-lg w-full hidden">
+            Pay & Download CSV
         </button>
 
         <!-- Loader -->
@@ -98,12 +103,15 @@
     </div>
 
     <script>
+        let downloadToken = null;
+
         document.getElementById("uploadBtn").addEventListener("click", async function() {
             const fileInput = document.getElementById("fileInput");
             const loading = document.getElementById("loading");
             const responseDiv = document.getElementById("response");
             const resultContainer = document.getElementById("resultContainer");
             const tableBody = document.getElementById("tableBody");
+            const payBtn = document.getElementById("payBtn");
 
             if (!fileInput.files.length) {
                 alert("Please select a file first!");
@@ -118,8 +126,8 @@
             loading.classList.remove("hidden");
             responseDiv.classList.add("hidden");
             resultContainer.classList.add("hidden");
+            payBtn.classList.add("hidden");
 
-            // Send file to FastAPI backend
             try {
                 const response = await fetch("https://datacleaningapi.onrender.com/clean-data/", {
                     method: "POST",
@@ -133,25 +141,29 @@
                 const data = await response.json();
                 loading.classList.add("hidden");
 
-                // Show success message
-                responseDiv.classList.remove("hidden");
-                responseDiv.innerText = `✅ File cleaned! Rows before: ${data.original_rows}, Rows after: ${data.cleaned_rows}`;
+                if (data.status === "success") {
+                    downloadToken = data.download_token;
+                    responseDiv.classList.remove("hidden");
+                    responseDiv.innerText = `✅ File cleaned! Rows before: ${data.original_rows}, Rows after: ${data.cleaned_rows}`;
+                    
+                    tableBody.innerHTML = "";
+                    data.cleaned_data_sample.forEach(row => {
+                        tableBody.innerHTML += `
+                            <tr>
+                                <td>${row.title}</td>
+                                <td><a href="${row.url_clean}" target="_blank">${row.url_clean}</a></td>
+                                <td>${row.description}</td>
+                                <td>${row["revenue($)"]}</td>
+                            </tr>
+                        `;
+                    });
 
-                // Populate table
-                tableBody.innerHTML = "";
-                data.cleaned_data_sample.forEach(row => {
-                    tableBody.innerHTML += `
-                        <tr>
-                            <td>${row.title}</td>
-                            <td><a href="${row.url_clean}" target="_blank">${row.url_clean}</a></td>
-                            <td>${row.description}</td>
-                            <td>${row["revenue($)"]}</td>
-                        </tr>
-                    `;
-                });
-
-                // Show result container
-                resultContainer.classList.remove("hidden");
+                    resultContainer.classList.remove("hidden");
+                    payBtn.classList.remove("hidden"); // Show pay button
+                } else {
+                    responseDiv.classList.remove("hidden");
+                    responseDiv.innerText = "❌ Error processing file!";
+                }
 
             } catch (error) {
                 loading.classList.add("hidden");
@@ -160,6 +172,49 @@
                 console.error(error);
             }
         });
+
+        document.getElementById("payBtn").addEventListener("click", function() {
+            if (!downloadToken) {
+                alert("No file to download. Please clean your data first.");
+                return;
+            }
+
+            const handler = PaystackPop.setup({
+                key: "pk_live_xxxxxxxxxxxxxxxxx", // Replace with your Paystack Public Key
+                email: "user@example.com", // Replace with user input
+                amount: 5000 * 100, // Replace with dynamic amount (in kobo)
+                currency: "USD", // Change if necessary
+                callback: function(response) {
+                    verifyPayment(response.reference);
+                },
+                onClose: function() {
+                    alert("Payment window closed.");
+                }
+            });
+
+            handler.openIframe();
+        });
+
+        async function verifyPayment(reference) {
+            try {
+                const response = await fetch("https://datacleaningapi.onrender.com/paystack/webhook/", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ event: "charge.success", data: { reference } })
+                });
+
+                const data = await response.json();
+                if (data.status === "success") {
+                    alert("Payment successful! Downloading file...");
+                    window.location.href = `https://datacleaningapi.onrender.com/download/${downloadToken}`;
+                } else {
+                    alert("Payment verification failed!");
+                }
+            } catch (error) {
+                console.error("Payment verification error:", error);
+                alert("Payment verification error.");
+            }
+        }
     </script>
 
 </body>
