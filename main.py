@@ -24,10 +24,17 @@ app.add_middleware(
 
 @app.get("/")
 def read_root():
+    """Root route to check if API is running."""
     return {"message": "API is running successfully!"}
+
+@app.get("/health")
+def health_check():
+    """Health check route for uptime monitoring."""
+    return {"status": "healthy", "message": "API is running fine"}
 
 @app.post("/clean-data/")
 async def clean_data(file: UploadFile = File(...)):
+    """Endpoint to clean uploaded CSV, JSON, or TXT file."""
     try:
         # Read file contents
         contents = await file.read()
@@ -83,5 +90,6 @@ async def clean_data(file: UploadFile = File(...)):
 # ✅ Fix: Corrected Uvicorn Configuration (Fixes asyncio.run() issue)
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))  # Render assigns a dynamic port
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(uvicorn.run(app, host="0.0.0.0", port=port))
+    config = uvicorn.Config(app, host="0.0.0.0", port=port)
+    server = uvicorn.Server(config)
+    server.run()
