@@ -118,34 +118,37 @@ async def clean_data(
 @app.post("/paystack/webhook/")
 async def verify_payment(request: Request):
     """Handles Paystack webhook for payment verification"""
-    payload = await request.json()
-    event = payload.get("event")
+    try:
+        payload = await request.json()  # Ensure JSON body is received
+        event = payload.get("event", "")
 
-    if event == "charge.success":
-        payment_reference = payload["data"]["reference"]
-        
-        # Verify payment status
-        headers = {
-            "Authorization": f"Bearer {PAYSTACK_SECRET_KEY}",
-            "Content-Type": "application/json"
-        }
-        response = requests.get(f"https://api.paystack.co/transaction/verify/{payment_reference}", headers=headers)
-        payment_data = response.json()
+        if event == "charge.success":
+            payment_reference = payload["data"]["reference"]
 
-        if payment_data["status"] and payment_data["data"]["status"] == "success":
-            # ✅ Payment Successful — Generate a unique download token
-            download_token = str(uuid.uuid4())
-            verified_payments[download_token] = payment_reference
-
-            return {
-                "status": "success",
-                "message": "Payment verified. Use the token to download your CSV.",
-                "download_token": download_token
+            # Verify payment status
+            headers = {
+                "Authorization": f"Bearer {PAYSTACK_SECRET_KEY}",
+                "Content-Type": "application/json"
             }
-        else:
-            raise HTTPException(status_code=400, detail="Payment verification failed.")
+            response = requests.get(f"https://api.paystack.co/transaction/verify/{payment_reference}", headers=headers)
+            payment_data = response.json()
 
-    return {"status": "error", "message": "Invalid event"}
+            if payment_data.get("status") and payment_data["data"].get("status") == "success":
+                # ✅ Payment Successful — Generate a unique download token
+                download_token = str(uuid.uuid4())
+                verified_payments[download_token] = payment_reference
+
+                return {
+                    "status": "success",
+                    "message": "Payment verified. Use the token to download your CSV.",
+                    "download_token": download_token
+                }
+
+        return {"status": "error", "message": "Invalid event"}
+
+    except Exception as e:
+        logging.error(f"Webhook error: {str(e)}")
+        return {"status": "error", "message": str(e)}
 
 @app.get("/download/{token}")
 async def download_csv(token: str):
