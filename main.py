@@ -150,13 +150,18 @@ async def verify_payment(request: Request):
 
         if payment_data.get("status") and payment_data["data"].get("status") == "success":
             download_token = str(uuid.uuid4())
-            verified_payments[download_token] = payment_reference
 
-            return {
-                "status": "success",
-                "message": "Payment verified. Use the token to download your CSV.",
-                "download_token": download_token
-            }
+            # ✅ Correctly map the token to the cleaned file
+            for filename, path in cleaned_files.items():
+                if Path(path).exists():
+                    verified_payments[download_token] = filename
+                    return {
+                        "status": "success",
+                        "message": "Payment verified. Use the token to download your CSV.",
+                        "download_token": download_token
+                    }
+
+            return {"status": "error", "message": "No cleaned files found to assign a token."}
 
         return {"status": "error", "message": "Payment verification failed"}
 
@@ -179,9 +184,10 @@ async def download_csv(token: str):
     with open(file_path, "r") as f:
         csv_content = f.read()
 
+    # ✅ Delete only the specific file instead of the entire directory
+    Path(file_path).unlink(missing_ok=True)
     del verified_payments[token]
     del cleaned_files[filename]
-    shutil.rmtree(file_path, ignore_errors=True)
 
     return {
         "status": "success",
