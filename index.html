@@ -7,14 +7,11 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://js.paystack.co/v1/inline.js"></script> <!-- ✅ Paystack SDK -->
     <style>
-        /* Background Gradient */
         body {
             background: linear-gradient(135deg, #0f172a, #1e3a8a);
             color: white;
             font-family: 'Poppins', sans-serif;
         }
-
-        /* Glassmorphism Effect */
         .glass {
             background: rgba(255, 255, 255, 0.15);
             backdrop-filter: blur(10px);
@@ -22,8 +19,6 @@
             padding: 20px;
             box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.2);
         }
-
-        /* Button Styling */
         .btn {
             transition: all 0.3s ease-in-out;
             cursor: pointer;
@@ -32,28 +27,6 @@
             transform: translateY(-3px);
             background: #4cc9f0;
             color: #000;
-        }
-
-        /* Table Styling */
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-        }
-        th, td {
-            border: 1px solid #ddd;
-            padding: 10px;
-            text-align: center;
-        }
-        th {
-            background: #4cc9f0;
-            color: black;
-        }
-        tr:nth-child(even) {
-            background: rgba(255, 255, 255, 0.1);
-        }
-        tr:hover {
-            background: rgba(255, 255, 255, 0.2);
         }
     </style>
 </head>
@@ -64,14 +37,21 @@
         <p class="text-sm mb-4">Upload a CSV file, and we’ll clean it for you!</p>
 
         <!-- File Upload -->
-        <input id="fileInput" type="file" class="w-full p-2 mb-4 border rounded bg-gray-800 text-white">
-        
-        <!-- Upload & Pay Buttons -->
+        <input id="fileInput" type="file" class="w-full p-2 mb-2 border rounded bg-gray-800 text-white">
+
+        <!-- User Email Input -->
+        <input id="emailInput" type="email" placeholder="Enter your email" 
+            class="w-full p-2 mb-4 border rounded bg-gray-800 text-white">
+
+        <!-- Upload & Payment Buttons -->
         <button id="uploadBtn" class="btn bg-blue-500 text-white px-6 py-2 rounded-lg w-full mb-2">
             Upload & Clean Data
         </button>
         <button id="payBtn" class="btn bg-green-500 text-white px-6 py-2 rounded-lg w-full hidden">
             Pay & Download CSV
+        </button>
+        <button id="downloadBtn" class="btn bg-purple-500 text-white px-6 py-2 rounded-lg w-full hidden">
+            Download CSV
         </button>
 
         <!-- Loader -->
@@ -82,24 +62,6 @@
 
         <!-- Response -->
         <div id="response" class="hidden mt-4 p-3 rounded bg-green-500 text-black"></div>
-
-        <!-- Table for Cleaned Data -->
-        <div id="resultContainer" class="hidden mt-6">
-            <h2 class="text-lg font-bold">Cleaned Data:</h2>
-            <div class="overflow-x-auto">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Title</th>
-                            <th>URL</th>
-                            <th>Description</th>
-                            <th>Revenue ($)</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tableBody"></tbody>
-                </table>
-            </div>
-        </div>
     </div>
 
     <script>
@@ -107,14 +69,17 @@
 
         document.getElementById("uploadBtn").addEventListener("click", async function() {
             const fileInput = document.getElementById("fileInput");
+            const emailInput = document.getElementById("emailInput");
             const loading = document.getElementById("loading");
             const responseDiv = document.getElementById("response");
-            const resultContainer = document.getElementById("resultContainer");
-            const tableBody = document.getElementById("tableBody");
             const payBtn = document.getElementById("payBtn");
 
             if (!fileInput.files.length) {
-                alert("Please select a file first!");
+                alert("⚠️ Please select a file first!");
+                return;
+            }
+            if (!emailInput.value) {
+                alert("⚠️ Please enter your email to proceed!");
                 return;
             }
 
@@ -125,7 +90,6 @@
             // Show loading
             loading.classList.remove("hidden");
             responseDiv.classList.add("hidden");
-            resultContainer.classList.add("hidden");
             payBtn.classList.add("hidden");
 
             try {
@@ -134,37 +98,18 @@
                     body: formData
                 });
 
-                if (!response.ok) {
-                    throw new Error(`Error: ${response.status} - ${response.statusText}`);
-                }
-
                 const data = await response.json();
                 loading.classList.add("hidden");
 
                 if (data.status === "success") {
                     downloadToken = data.download_token;
                     responseDiv.classList.remove("hidden");
-                    responseDiv.innerText = `✅ File cleaned! Rows before: ${data.original_rows}, Rows after: ${data.cleaned_rows}`;
-                    
-                    tableBody.innerHTML = "";
-                    data.cleaned_data_sample.forEach(row => {
-                        tableBody.innerHTML += `
-                            <tr>
-                                <td>${row.title}</td>
-                                <td><a href="${row.url_clean}" target="_blank">${row.url_clean}</a></td>
-                                <td>${row.description}</td>
-                                <td>${row["revenue($)"]}</td>
-                            </tr>
-                        `;
-                    });
-
-                    resultContainer.classList.remove("hidden");
-                    payBtn.classList.remove("hidden"); // Show pay button
+                    responseDiv.innerText = `✅ File cleaned! Pay to download.`;
+                    payBtn.classList.remove("hidden");
                 } else {
                     responseDiv.classList.remove("hidden");
                     responseDiv.innerText = "❌ Error processing file!";
                 }
-
             } catch (error) {
                 loading.classList.add("hidden");
                 responseDiv.classList.remove("hidden");
@@ -174,21 +119,22 @@
         });
 
         document.getElementById("payBtn").addEventListener("click", function() {
-            if (!downloadToken) {
-                alert("No file to download. Please clean your data first.");
+            const email = document.getElementById("emailInput").value;
+            if (!downloadToken || !email) {
+                alert("⚠️ No file to download. Please clean your data first.");
                 return;
             }
 
             const handler = PaystackPop.setup({
-                key: "pk_live_xxxxxxxxxxxxxxxxx", // Replace with your Paystack Public Key
-                email: "user@example.com", // Replace with user input
-                amount: 5000 * 100, // Replace with dynamic amount (in kobo)
-                currency: "USD", // Change if necessary
+                key: "pk_live_4fbd3e09f5ca78fdd64522ac6f2a25b8382b1e16", // ✅ Replace with your Paystack Public Key
+                email: email,
+                amount: 5000 * 100, // ✅ Update amount dynamically if needed
+                currency: "USD",
                 callback: function(response) {
                     verifyPayment(response.reference);
                 },
                 onClose: function() {
-                    alert("Payment window closed.");
+                    alert("❌ Payment window closed.");
                 }
             });
 
@@ -205,16 +151,24 @@
 
                 const data = await response.json();
                 if (data.status === "success") {
-                    alert("Payment successful! Downloading file...");
-                    window.location.href = `https://datacleaningapi.onrender.com/download/${downloadToken}`;
+                    alert("✅ Payment successful! Downloading file...");
+                    document.getElementById("downloadBtn").classList.remove("hidden");
                 } else {
-                    alert("Payment verification failed!");
+                    alert("❌ Payment verification failed!");
                 }
             } catch (error) {
                 console.error("Payment verification error:", error);
-                alert("Payment verification error.");
+                alert("❌ Payment verification error.");
             }
         }
+
+        document.getElementById("downloadBtn").addEventListener("click", function() {
+            if (!downloadToken) {
+                alert("⚠️ No valid token found. Please complete the payment first.");
+                return;
+            }
+            window.location.href = `https://datacleaningapi.onrender.com/download/${downloadToken}`;
+        });
     </script>
 
 </body>
