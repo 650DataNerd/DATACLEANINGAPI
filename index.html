@@ -41,7 +41,13 @@
 
         <!-- User Email Input -->
         <input id="emailInput" type="email" placeholder="Enter your email" 
-            class="w-full p-2 mb-4 border rounded bg-gray-800 text-white">
+            class="w-full p-2 mb-2 border rounded bg-gray-800 text-white">
+
+        <!-- Currency Selector -->
+        <select id="currencySelect" class="w-full p-2 mb-4 border rounded bg-gray-800 text-white">
+            <option value="KES">KES - Kenyan Shilling</option>
+            <option value="USD">USD - US Dollar</option>
+        </select>
 
         <!-- Upload & Payment Buttons -->
         <button id="uploadBtn" class="btn bg-blue-500 text-white px-6 py-2 rounded-lg w-full mb-2">
@@ -120,16 +126,19 @@
 
         document.getElementById("payBtn").addEventListener("click", function() {
             const email = document.getElementById("emailInput").value;
+            const selectedCurrency = document.getElementById("currencySelect").value;
             if (!downloadToken || !email) {
                 alert("⚠️ No file to download. Please clean your data first.");
                 return;
             }
 
+            const amount = selectedCurrency === "USD" ? 10 * 100 : 5000 * 100; // ✅ Adjust amount per currency
+
             const handler = PaystackPop.setup({
                 key: "pk_live_4fbd3e09f5ca78fdd64522ac6f2a25b8382b1e16", // ✅ Replace with your Paystack Public Key
                 email: email,
-                amount: 5000 * 100, // ✅ Update amount dynamically if needed
-                currency: "KES",
+                amount: amount, 
+                currency: selectedCurrency,
                 callback: function(response) {
                     verifyPayment(response.reference);
                 },
