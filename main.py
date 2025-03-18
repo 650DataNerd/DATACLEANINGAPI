@@ -37,7 +37,7 @@ PAYSTACK_SECRET_KEY = os.getenv("PAYSTACK_SECRET_KEY")
 TEMP_DIR = Path("temp_files")
 TEMP_DIR.mkdir(exist_ok=True)  # Ensure directory exists
 
-# ✅ Store transactions & cleaned files (mock database)
+# ✅ Store transactions & cleaned files
 verified_payments = {}  # Stores verified payments
 cleaned_files = {}  # Stores cleaned file paths
 
@@ -53,12 +53,10 @@ async def cleanup_old_files():
 
 @app.get("/")
 def read_root():
-    """Root route to check if API is running."""
     return {"message": "API is running successfully!"}
 
 @app.get("/health")
 def health_check():
-    """Health check route for uptime monitoring."""
     return {"status": "healthy", "message": "API is running fine"}
 
 @app.post("/clean-data/")
@@ -85,6 +83,7 @@ async def clean_data(
 
         logging.info(f"Processing file: {file.filename} with {df.shape[0]} rows and {df.shape[1]} columns")
 
+        # ✅ Standardize column names
         df.columns = df.columns.str.strip().str.lower().str.replace(r'\.\d+', '', regex=True)
 
         # ✅ Select specific columns to clean (if provided)
@@ -96,7 +95,11 @@ async def clean_data(
         if missing_value_strategy == "drop":
             df.dropna(inplace=True)
         elif missing_value_strategy == "fill":
-            df.fillna("Unknown", inplace=True)
+            for col in df.columns:
+                if df[col].dtype == "float64":
+                    df[col].fillna(0, inplace=True)  # Fill numeric columns with 0
+                else:
+                    df[col].fillna("Unknown", inplace=True)  # Fill text columns with "Unknown"
 
         # ✅ Remove duplicate rows (if enabled)
         if remove_duplicates:
@@ -104,11 +107,11 @@ async def clean_data(
 
         # ✅ Apply text formatting
         if text_format == "lowercase":
-            df = df.applymap(lambda x: x.lower() if isinstance(x, str) else x)
+            df = df.map(lambda x: x.lower() if isinstance(x, str) else x)
         elif text_format == "uppercase":
-            df = df.applymap(lambda x: x.upper() if isinstance(x, str) else x)
+            df = df.map(lambda x: x.upper() if isinstance(x, str) else x)
         elif text_format == "capitalize":
-            df = df.applymap(lambda x: x.capitalize() if isinstance(x, str) else x)
+            df = df.map(lambda x: x.capitalize() if isinstance(x, str) else x)
 
         if df.empty:
             raise HTTPException(status_code=400, detail="No data left after cleaning. Check your input file.")
@@ -151,7 +154,7 @@ async def verify_payment(request: Request):
         if payment_data.get("status") and payment_data["data"].get("status") == "success":
             download_token = str(uuid.uuid4())
 
-            # ✅ Correctly map the token to the cleaned file
+            # ✅ Assign token to the correct cleaned file
             for filename, path in cleaned_files.items():
                 if Path(path).exists():
                     verified_payments[download_token] = filename
